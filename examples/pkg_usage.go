@@ -10,14 +10,14 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"your-project/pkg/config"
-	"your-project/pkg/errors"
-	"your-project/pkg/health"
-	"your-project/pkg/logger"
-	"your-project/pkg/metrics"
-	"your-project/pkg/middleware"
-	"your-project/pkg/tracing"
-	"your-project/pkg/utils"
+	"github.com/Sakuya1998/go-project-layout/pkg/config"
+	"github.com/Sakuya1998/go-project-layout/pkg/errors"
+	"github.com/Sakuya1998/go-project-layout/pkg/health"
+	"github.com/Sakuya1998/go-project-layout/pkg/logger"
+	"github.com/Sakuya1998/go-project-layout/pkg/metrics"
+	"github.com/Sakuya1998/go-project-layout/pkg/middleware"
+	"github.com/Sakuya1998/go-project-layout/pkg/tracing"
+	"github.com/Sakuya1998/go-project-layout/pkg/utils"
 )
 
 func main() {
@@ -69,7 +69,7 @@ func main() {
 	ctx := context.Background()
 	results := health.Check(ctx)
 	for name, result := range results {
-		fmt.Printf("检查器 %s: %s - %s (耗时: %v)\n", 
+		fmt.Printf("检查器 %s: %s - %s (耗时: %v)\n",
 			name, result.Status, result.Message, result.Duration)
 	}
 
@@ -85,14 +85,14 @@ func main() {
 			"method": "GET",
 			"path":   "/api/users",
 		})
-		
+
 		metricsCollector.RecordHistogram("http_request_duration_seconds", 0.123, map[string]string{
 			"method": "GET",
 			"path":   "/api/users",
 		})
-		
+
 		metricsCollector.SetGauge("active_connections", 42, nil)
-		
+
 		fmt.Println("指标已记录")
 	}
 
@@ -103,10 +103,10 @@ func main() {
 		ctx, span := tracer.StartSpan(ctx, "example_operation")
 		span.SetAttribute("user_id", "12345")
 		span.SetAttribute("operation", "get_user")
-		
+
 		// 模拟一些工作
 		time.Sleep(10 * time.Millisecond)
-		
+
 		span.End()
 		fmt.Println("链路追踪span已创建")
 	}
@@ -155,13 +155,13 @@ func main() {
 		api.GET("/health", func(c *gin.Context) {
 			results := health.Check(c.Request.Context())
 			status := health.Status(c.Request.Context())
-			
+
 			response := gin.H{
-				"status":  status,
-				"checks":  results,
+				"status":    status,
+				"checks":    results,
 				"timestamp": time.Now(),
 			}
-			
+
 			if status == health.StatusHealthy {
 				c.JSON(http.StatusOK, response)
 			} else {
@@ -171,20 +171,20 @@ func main() {
 
 		api.GET("/users/:id", func(c *gin.Context) {
 			userID := c.Param("id")
-			
+
 			// 模拟业务逻辑
 			if userID == "" {
 				err := errors.NewValidationError("用户ID不能为空")
 				c.JSON(err.HTTPStatus(), errors.ToErrorResponse(err))
 				return
 			}
-			
+
 			if userID == "999" {
 				err := errors.NewNotFoundError("用户")
 				c.JSON(err.HTTPStatus(), errors.ToErrorResponse(err))
 				return
 			}
-			
+
 			// 记录指标
 			if metricsCollector != nil {
 				metricsCollector.IncrementCounter("api_requests_total", map[string]string{
@@ -192,10 +192,10 @@ func main() {
 					"status":   "success",
 				})
 			}
-			
+
 			c.JSON(http.StatusOK, gin.H{
-				"id":   userID,
-				"name": "示例用户",
+				"id":    userID,
+				"name":  "示例用户",
 				"email": "user@example.com",
 			})
 		})
