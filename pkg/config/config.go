@@ -27,9 +27,10 @@ type ApplicationConfig struct {
 }
 
 type LogConfig struct {
+	Enabled    bool   `mapstructure:"enabled"`
 	Level      string `mapstructure:"level"`
 	Format     string `mapstructure:"format"`
-	Path       string `mapstructure:"path"`
+	Output     string `mapstructure:"output"`
 	MaxSize    int    `mapstructure:"max_size"`
 	MaxAge     int    `mapstructure:"max_age"`
 	MaxBackups int    `mapstructure:"max_backups"`
@@ -81,12 +82,12 @@ type MetricsConfig struct {
 }
 
 type TracingConfig struct {
-	Enabled        bool   `mapstructure:"enabled"`
-	ServiceName    string `mapstructure:"service_name"`
-	ServiceVersion string `mapstructure:"service_version"`
-	Environment    string `mapstructure:"environment"`
-	ExporterType   string `mapstructure:"exporter_type"`
-	Endpoint       string `mapstructure:"endpoint"`
+	Enabled        bool    `mapstructure:"enabled"`
+	ServiceName    string  `mapstructure:"service_name"`
+	ServiceVersion string  `mapstructure:"service_version"`
+	Environment    string  `mapstructure:"environment"`
+	ExporterType   string  `mapstructure:"exporter_type"`
+	Endpoint       string  `mapstructure:"endpoint"`
 	SampleRatio    float64 `mapstructure:"sample_ratio"`
 }
 
@@ -429,10 +430,11 @@ func (c *ApplicationConfig) IsProduction() bool {
 
 // GetLogFilePath 返回日志文件路径
 func (c *LogConfig) GetLogFilePath() string {
-	if c.Path == "" {
+	if c.Output == "" {
+
 		return "./logs/app.log"
 	}
-	return fmt.Sprintf("%s/app.log", c.Path)
+	return fmt.Sprintf("%s/app.log", c.Output)
 }
 
 // validateMetrics 验证指标配置

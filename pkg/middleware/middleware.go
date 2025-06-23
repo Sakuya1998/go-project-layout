@@ -13,9 +13,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 
-	"github.com/your-org/your-project/pkg/config"
-	"github.com/your-org/your-project/pkg/logger"
-	"github.com/your-org/your-project/pkg/metrics"
+	"github.com/Sakuya1998/go-project-layout/pkg/config"
+	"github.com/Sakuya1998/go-project-layout/pkg/logger"
+	"github.com/Sakuya1998/go-project-layout/pkg/metrics"
 )
 
 // MiddlewareManager 中间件管理器

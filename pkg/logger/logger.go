@@ -9,7 +9,7 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
-	"github.com/your-org/your-project/pkg/config"
+	"github.com/Sakuya1998/go-project-layout/pkg/config"
 )
 
 // Logger 日志接口
@@ -29,7 +29,7 @@ type zapLogger struct {
 }
 
 // New 创建新的日志实例
-func New(cfg *config.LoggerConfig) (Logger, error) {
+func New(cfg *config.LogConfig) (Logger, error) {
 	if !cfg.Enabled {
 		return &noopLogger{}, nil
 	}
@@ -137,13 +137,13 @@ func (n *noopLogger) Warn(msg string, fields ...zap.Field)  {}
 func (n *noopLogger) Error(msg string, fields ...zap.Field) {}
 func (n *noopLogger) Fatal(msg string, fields ...zap.Field) {}
 func (n *noopLogger) With(fields ...zap.Field) Logger       { return n }
-func (n *noopLogger) Sync() error                          { return nil }
+func (n *noopLogger) Sync() error                           { return nil }
 
 // 全局日志实例
 var globalLogger Logger
 
 // Init 初始化全局日志
-func Init(cfg *config.LoggerConfig) error {
+func Init(cfg *config.LogConfig) error {
 	logger, err := New(cfg)
 	if err != nil {
 		return err
