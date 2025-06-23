@@ -16,6 +16,8 @@ type Config struct {
 	Providers []ProviderConfig  `mapstructure:"providers"`
 	JWT       JWTConfig         `mapstructure:"jwt"`
 	CORS      CORSConfig        `mapstructure:"cors"`
+	Metrics   MetricsConfig     `mapstructure:"metrics"`
+	Tracing   TracingConfig     `mapstructure:"tracing"`
 }
 type ApplicationConfig struct {
 	Env     string `mapstructure:"env"`
@@ -32,6 +34,8 @@ type LogConfig struct {
 	MaxAge     int    `mapstructure:"max_age"`
 	MaxBackups int    `mapstructure:"max_backups"`
 	Compress   bool   `mapstructure:"compress"`
+	Caller     bool   `mapstructure:"caller"`
+	Stacktrace bool   `mapstructure:"stacktrace"`
 }
 
 type DatabaseConfig struct {
@@ -65,6 +69,25 @@ type CORSConfig struct {
 	AllowOrigins []string `mapstructure:"allow_origins"`
 	AllowMethods []string `mapstructure:"allow_methods"`
 	AllowHeaders []string `mapstructure:"allow_headers"`
+}
+
+type MetricsConfig struct {
+	Enabled              bool   `mapstructure:"enabled"`
+	Path                 string `mapstructure:"path"`
+	Port                 int    `mapstructure:"port"`
+	Namespace            string `mapstructure:"namespace"`
+	EnableGoMetrics      bool   `mapstructure:"enable_go_metrics"`
+	EnableProcessMetrics bool   `mapstructure:"enable_process_metrics"`
+}
+
+type TracingConfig struct {
+	Enabled        bool   `mapstructure:"enabled"`
+	ServiceName    string `mapstructure:"service_name"`
+	ServiceVersion string `mapstructure:"service_version"`
+	Environment    string `mapstructure:"environment"`
+	ExporterType   string `mapstructure:"exporter_type"`
+	Endpoint       string `mapstructure:"endpoint"`
+	SampleRatio    float64 `mapstructure:"sample_ratio"`
 }
 
 // Load 加载配置文件并返回配置实例
@@ -142,6 +165,23 @@ func setDefaults() {
 	viper.SetDefault("cors.allow_origins", []string{"http://localhost:3000"})
 	viper.SetDefault("cors.allow_methods", []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"})
 	viper.SetDefault("cors.allow_headers", []string{"Content-Type", "Authorization"})
+
+	// Metrics 配置默认值
+	viper.SetDefault("metrics.enabled", true)
+	viper.SetDefault("metrics.path", "/metrics")
+	viper.SetDefault("metrics.port", 9090)
+	viper.SetDefault("metrics.namespace", "app")
+	viper.SetDefault("metrics.enable_go_metrics", true)
+	viper.SetDefault("metrics.enable_process_metrics", true)
+
+	// Tracing 配置默认值
+	viper.SetDefault("tracing.enabled", true)
+	viper.SetDefault("tracing.service_name", "go-project-layout")
+	viper.SetDefault("tracing.service_version", "1.0.0")
+	viper.SetDefault("tracing.environment", "development")
+	viper.SetDefault("tracing.exporter_type", "jaeger")
+	viper.SetDefault("tracing.endpoint", "http://localhost:14268/api/traces")
+	viper.SetDefault("tracing.sample_ratio", 1.0)
 }
 
 // Validate 验证配置的有效性
@@ -173,6 +213,16 @@ func (c *Config) Validate() error {
 
 	// CORS 配置验证
 	if err := c.validateCORS(); err != nil {
+		return err
+	}
+
+	// Metrics 配置验证
+	if err := c.validateMetrics(); err != nil {
+		return err
+	}
+
+	// Tracing 配置验证
+	if err := c.validateTracing(); err != nil {
 		return err
 	}
 
@@ -383,4 +433,51 @@ func (c *LogConfig) GetLogFilePath() string {
 		return "./logs/app.log"
 	}
 	return fmt.Sprintf("%s/app.log", c.Path)
+}
+
+// validateMetrics 验证指标配置
+func (c *Config) validateMetrics() error {
+	if !c.Metrics.Enabled {
+		return nil
+	}
+
+	if c.Metrics.Port <= 0 || c.Metrics.Port > 65535 {
+		return errors.NewConfigValidationError("metrics.port", "指标服务端口号必须在 1-65535 范围内")
+	}
+
+	if c.Metrics.Path == "" {
+		return errors.NewConfigValidationError("metrics.path", "指标路径不能为空")
+	}
+
+	if c.Metrics.Namespace == "" {
+		return errors.NewConfigValidationError("metrics.namespace", "指标命名空间不能为空")
+	}
+
+	return nil
+}
+
+// validateTracing 验证追踪配置
+func (c *Config) validateTracing() error {
+	if !c.Tracing.Enabled {
+		return nil
+	}
+
+	if c.Tracing.ServiceName == "" {
+		return errors.NewConfigValidationError("tracing.service_name", "服务名称不能为空")
+	}
+
+	if c.Tracing.ServiceVersion == "" {
+		return errors.NewConfigValidationError("tracing.service_version", "服务版本不能为空")
+	}
+
+	validExporters := []string{"jaeger", "zipkin", "otlp"}
+	if !contains(validExporters, c.Tracing.ExporterType) {
+		return errors.NewConfigValidationError("tracing.exporter_type", "追踪导出器类型必须是 jaeger, zipkin, otlp 之一")
+	}
+
+	if c.Tracing.SampleRatio < 0 || c.Tracing.SampleRatio > 1 {
+		return errors.NewConfigValidationError("tracing.sample_ratio", "采样比例必须在 0-1 范围内")
+	}
+
+	return nil
 }

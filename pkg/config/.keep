@@ -1,3 +1,0 @@
-# This file is used to keep the directory in version control
-# Git does not track empty directories, so this file ensures
-# the config directory is included in the repository
