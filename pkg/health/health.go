@@ -233,7 +233,7 @@ func MemoryChecker(name string, threshold float64) Checker {
 	return NewChecker(name, func(ctx context.Context) CheckResult {
 		// 简化实现，实际应用中可以检查真实的内存使用情况
 		usage := 0.5 // 模拟50%的内存使用率
-		
+
 		if usage > threshold {
 			return CheckResult{
 				Status:  StatusDegraded,
@@ -244,7 +244,7 @@ func MemoryChecker(name string, threshold float64) Checker {
 				},
 			}
 		}
-		
+
 		return CheckResult{
 			Status:  StatusHealthy,
 			Message: fmt.Sprintf("Memory usage %.2f%% is normal", usage*100),
@@ -280,7 +280,7 @@ func CheckOne(ctx context.Context, name string) (CheckResult, bool) {
 }
 
 // Status 获取全局健康状态
-func Status(ctx context.Context) Status {
+func GetStatus(ctx context.Context) Status {
 	return globalHealth.Status(ctx)
 }
 
