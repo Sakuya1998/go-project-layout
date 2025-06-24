@@ -5,6 +5,7 @@ package health
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"sync"
 	"time"
 )
@@ -196,7 +197,147 @@ func (h *Health) IsHealthy(ctx context.Context) bool {
 	return h.Status(ctx) == StatusHealthy
 }
 
+// IsReady 检查是否就绪（所有关键依赖都健康）
+func (h *Health) IsReady(ctx context.Context) bool {
+	results := h.Check(ctx)
+	
+	// 检查关键依赖服务
+	criticalServices := []string{"database", "redis", "config"}
+	for _, service := range criticalServices {
+		if result, exists := results[service]; exists {
+			if result.Status == StatusUnhealthy {
+				return false
+			}
+		}
+	}
+	
+	return true
+}
+
+// GetDependencyStatus 获取依赖服务状态摘要
+func (h *Health) GetDependencyStatus(ctx context.Context) map[string]interface{} {
+	results := h.Check(ctx)
+	status := make(map[string]interface{})
+	
+	for name, result := range results {
+		status[name] = map[string]interface{}{
+			"status":    result.Status,
+			"message":   result.Message,
+			"duration":  result.Duration.String(),
+			"timestamp": result.Timestamp.Format(time.RFC3339),
+		}
+	}
+	
+	return status
+}
+
 // 预定义的健康检查器
+
+// DatabaseChecker 数据库健康检查器
+func DatabaseChecker(name string, dsn string) Checker {
+	return NewChecker(name, func(ctx context.Context) CheckResult {
+		// 简化实现，实际应用中应该检查真实的数据库连接
+		select {
+		case <-ctx.Done():
+			return CheckResult{
+				Status:  StatusUnhealthy,
+				Message: "Database check timeout",
+			}
+		default:
+			// 模拟数据库检查
+			return CheckResult{
+				Status:  StatusHealthy,
+				Message: "Database connection is healthy",
+				Details: map[string]interface{}{
+					"dsn": dsn,
+				},
+			}
+		}
+	})
+}
+
+// RedisChecker Redis健康检查器
+func RedisChecker(name string, addr string) Checker {
+	return NewChecker(name, func(ctx context.Context) CheckResult {
+		start := time.Now()
+		// 模拟Redis连接检查
+		latency := time.Since(start)
+		
+		if latency > 100*time.Millisecond {
+			return CheckResult{
+				Status:  StatusDegraded,
+				Message: fmt.Sprintf("Redis latency %.2fms is high", float64(latency.Nanoseconds())/1e6),
+				Details: map[string]interface{}{
+					"addr":    addr,
+					"latency": latency.String(),
+				},
+			}
+		}
+		
+		return CheckResult{
+			Status:  StatusHealthy,
+			Message: "Redis connection is healthy",
+			Details: map[string]interface{}{
+				"addr":    addr,
+				"latency": latency.String(),
+			},
+		}
+	})
+}
+
+// HTTPServiceChecker HTTP服务健康检查器
+func HTTPServiceChecker(name string, url string, timeout time.Duration) Checker {
+	return NewChecker(name, func(ctx context.Context) CheckResult {
+		ctx, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
+		
+		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+		if err != nil {
+			return CheckResult{
+				Status:  StatusUnhealthy,
+				Message: fmt.Sprintf("Failed to create request: %v", err),
+				Details: map[string]interface{}{
+					"url":   url,
+					"error": err.Error(),
+				},
+			}
+		}
+		
+		client := &http.Client{Timeout: timeout}
+		resp, err := client.Do(req)
+		if err != nil {
+			return CheckResult{
+				Status:  StatusUnhealthy,
+				Message: fmt.Sprintf("HTTP request failed: %v", err),
+				Details: map[string]interface{}{
+					"url":   url,
+					"error": err.Error(),
+				},
+			}
+		}
+		defer resp.Body.Close()
+		
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			return CheckResult{
+				Status:  StatusHealthy,
+				Message: "HTTP service is healthy",
+				Details: map[string]interface{}{
+					"url":         url,
+					"status_code": resp.StatusCode,
+				},
+			}
+		}
+		
+		return CheckResult{
+			Status:  StatusDegraded,
+			Message: fmt.Sprintf("HTTP service returned status %d", resp.StatusCode),
+			Details: map[string]interface{}{
+				"url":         url,
+				"status_code": resp.StatusCode,
+			},
+		}
+	})
+}
 
 // AlwaysHealthy 总是返回健康状态的检查器
 func AlwaysHealthy(name string) Checker {

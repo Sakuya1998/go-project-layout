@@ -238,9 +238,71 @@ func DebugContext(ctx context.Context, msg string, fields ...zap.Field) {
 	GetGlobal().Debug(msg, fields...)
 }
 
+// DebugContextKV 带上下文的调试日志（键值对参数）
+func DebugContextKV(ctx context.Context, msg string, keysAndValues ...interface{}) {
+	fields := FromContext(ctx)
+	
+	// 将键值对转换为zap.Field
+	for i := 0; i < len(keysAndValues); i += 2 {
+		if i+1 < len(keysAndValues) {
+			key, ok := keysAndValues[i].(string)
+			if ok {
+				value := keysAndValues[i+1]
+				switch v := value.(type) {
+				case string:
+					fields = append(fields, zap.String(key, v))
+				case int:
+					fields = append(fields, zap.Int(key, v))
+				case int64:
+					fields = append(fields, zap.Int64(key, v))
+				case float64:
+					fields = append(fields, zap.Float64(key, v))
+				case bool:
+					fields = append(fields, zap.Bool(key, v))
+				default:
+					fields = append(fields, zap.Any(key, v))
+				}
+			}
+		}
+	}
+	
+	GetGlobal().Debug(msg, fields...)
+}
+
 // InfoContext 带上下文的信息日志
 func InfoContext(ctx context.Context, msg string, fields ...zap.Field) {
 	fields = append(fields, FromContext(ctx)...)
+	GetGlobal().Info(msg, fields...)
+}
+
+// InfoContextKV 带上下文的信息日志（键值对参数）
+func InfoContextKV(ctx context.Context, msg string, keysAndValues ...interface{}) {
+	fields := FromContext(ctx)
+	
+	// 将键值对转换为zap.Field
+	for i := 0; i < len(keysAndValues); i += 2 {
+		if i+1 < len(keysAndValues) {
+			key, ok := keysAndValues[i].(string)
+			if ok {
+				value := keysAndValues[i+1]
+				switch v := value.(type) {
+				case string:
+					fields = append(fields, zap.String(key, v))
+				case int:
+					fields = append(fields, zap.Int(key, v))
+				case int64:
+					fields = append(fields, zap.Int64(key, v))
+				case float64:
+					fields = append(fields, zap.Float64(key, v))
+				case bool:
+					fields = append(fields, zap.Bool(key, v))
+				default:
+					fields = append(fields, zap.Any(key, v))
+				}
+			}
+		}
+	}
+	
 	GetGlobal().Info(msg, fields...)
 }
 
@@ -250,9 +312,71 @@ func WarnContext(ctx context.Context, msg string, fields ...zap.Field) {
 	GetGlobal().Warn(msg, fields...)
 }
 
+// WarnContextKV 带上下文的警告日志（键值对参数）
+func WarnContextKV(ctx context.Context, msg string, keysAndValues ...interface{}) {
+	fields := FromContext(ctx)
+	
+	// 将键值对转换为zap.Field
+	for i := 0; i < len(keysAndValues); i += 2 {
+		if i+1 < len(keysAndValues) {
+			key, ok := keysAndValues[i].(string)
+			if ok {
+				value := keysAndValues[i+1]
+				switch v := value.(type) {
+				case string:
+					fields = append(fields, zap.String(key, v))
+				case int:
+					fields = append(fields, zap.Int(key, v))
+				case int64:
+					fields = append(fields, zap.Int64(key, v))
+				case float64:
+					fields = append(fields, zap.Float64(key, v))
+				case bool:
+					fields = append(fields, zap.Bool(key, v))
+				default:
+					fields = append(fields, zap.Any(key, v))
+				}
+			}
+		}
+	}
+	
+	GetGlobal().Warn(msg, fields...)
+}
+
 // ErrorContext 带上下文的错误日志
 func ErrorContext(ctx context.Context, msg string, fields ...zap.Field) {
 	fields = append(fields, FromContext(ctx)...)
+	GetGlobal().Error(msg, fields...)
+}
+
+// ErrorContextKV 带上下文的错误日志（键值对参数）
+func ErrorContextKV(ctx context.Context, msg string, keysAndValues ...interface{}) {
+	fields := FromContext(ctx)
+	
+	// 将键值对转换为zap.Field
+	for i := 0; i < len(keysAndValues); i += 2 {
+		if i+1 < len(keysAndValues) {
+			key, ok := keysAndValues[i].(string)
+			if ok {
+				value := keysAndValues[i+1]
+				switch v := value.(type) {
+				case string:
+					fields = append(fields, zap.String(key, v))
+				case int:
+					fields = append(fields, zap.Int(key, v))
+				case int64:
+					fields = append(fields, zap.Int64(key, v))
+				case float64:
+					fields = append(fields, zap.Float64(key, v))
+				case bool:
+					fields = append(fields, zap.Bool(key, v))
+				default:
+					fields = append(fields, zap.Any(key, v))
+				}
+			}
+		}
+	}
+	
 	GetGlobal().Error(msg, fields...)
 }
 

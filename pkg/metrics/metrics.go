@@ -14,6 +14,24 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
+// SLIMetrics SLI指标定义
+type SLIMetrics struct {
+	AvailabilityTarget float64       // 可用性目标 99.9%
+	LatencyTarget      time.Duration // 延迟目标 P99 < 100ms
+	ErrorRateTarget    float64       // 错误率目标 < 0.1%
+	ThroughputTarget   float64       // 吞吐量目标 RPS
+}
+
+// AlertRule 告警规则
+type AlertRule struct {
+	Name        string            `json:"name"`
+	Expr        string            `json:"expr"`
+	For         string            `json:"for"`
+	Severity    string            `json:"severity"`
+	Labels      map[string]string `json:"labels"`
+	Annotations map[string]string `json:"annotations"`
+}
+
 // Metrics 指标管理器接口
 type Metrics interface {
 	// Counter 计数器相关方法
@@ -34,6 +52,12 @@ type Metrics interface {
 	// 业务指标
 	RecordDatabaseOperation(operation, table string, duration time.Duration, success bool)
 	RecordCacheOperation(operation string, hit bool, duration time.Duration)
+	RecordBusinessMetric(metric string, value float64, labels map[string]string)
+
+	// SLI/SLO 相关
+	RecordSLI(sliType string, value float64, labels map[string]string)
+	GetSLIMetrics() *SLIMetrics
+	GenerateAlertRules() []AlertRule
 
 	// 服务器
 	StartServer(ctx context.Context) error
@@ -62,6 +86,11 @@ type prometheusMetrics struct {
 	cacheOperationsTotal *prometheus.CounterVec
 	cacheOperationDuration *prometheus.HistogramVec
 
+	// SLI指标
+	sliMetrics *SLIMetrics
+	businessMetrics map[string]*prometheus.GaugeVec
+	sliCounters map[string]*prometheus.CounterVec
+
 	server *http.Server
 }
 
@@ -83,6 +112,14 @@ func New(cfg *config.MetricsConfig) (Metrics, error) {
 		counters:   make(map[string]*prometheus.CounterVec),
 		histograms: make(map[string]*prometheus.HistogramVec),
 		gauges:     make(map[string]*prometheus.GaugeVec),
+		sliMetrics: &SLIMetrics{
+			AvailabilityTarget: 0.999,
+			LatencyTarget:      100 * time.Millisecond,
+			ErrorRateTarget:    0.001,
+			ThroughputTarget:   1000,
+		},
+		businessMetrics: make(map[string]*prometheus.GaugeVec),
+		sliCounters:     make(map[string]*prometheus.CounterVec),
 	}
 
 	// 注册默认指标收集器
@@ -238,6 +275,137 @@ func (m *prometheusMetrics) RecordCacheOperation(operation string, hit bool, dur
 	m.cacheOperationDuration.WithLabelValues(operation).Observe(duration.Seconds())
 }
 
+// RecordBusinessMetric 记录业务指标
+func (m *prometheusMetrics) RecordBusinessMetric(metric string, value float64, labels map[string]string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	
+	if gauge, exists := m.businessMetrics[metric]; exists {
+		labelValues := make([]string, 0, len(labels))
+		for _, v := range labels {
+			labelValues = append(labelValues, v)
+		}
+		gauge.WithLabelValues(labelValues...).Set(value)
+		return
+	}
+	
+	// 创建新的业务指标
+	labelNames := make([]string, 0, len(labels))
+	for k := range labels {
+		labelNames = append(labelNames, k)
+	}
+	
+	gauge := prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: m.config.Namespace,
+			Name:      fmt.Sprintf("business_%s", metric),
+			Help:      fmt.Sprintf("Business metric for %s", metric),
+		},
+		labelNames,
+	)
+	
+	m.registry.MustRegister(gauge)
+	m.businessMetrics[metric] = gauge
+	
+	labelValues := make([]string, 0, len(labels))
+	for _, v := range labels {
+		labelValues = append(labelValues, v)
+	}
+	gauge.WithLabelValues(labelValues...).Set(value)
+}
+
+// RecordSLI 记录SLI指标
+func (m *prometheusMetrics) RecordSLI(sliType string, value float64, labels map[string]string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	
+	key := fmt.Sprintf("sli_%s", sliType)
+	if counter, exists := m.sliCounters[key]; exists {
+		labelValues := make([]string, 0, len(labels))
+		for _, v := range labels {
+			labelValues = append(labelValues, v)
+		}
+		counter.WithLabelValues(labelValues...).Add(value)
+		return
+	}
+	
+	// 创建新的SLI计数器
+	labelNames := make([]string, 0, len(labels))
+	for k := range labels {
+		labelNames = append(labelNames, k)
+	}
+	
+	counter := prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: m.config.Namespace,
+			Name:      key,
+			Help:      fmt.Sprintf("SLI metric for %s", sliType),
+		},
+		labelNames,
+	)
+	
+	m.registry.MustRegister(counter)
+	m.sliCounters[key] = counter
+	
+	labelValues := make([]string, 0, len(labels))
+	for _, v := range labels {
+		labelValues = append(labelValues, v)
+	}
+	counter.WithLabelValues(labelValues...).Add(value)
+}
+
+// GetSLIMetrics 获取SLI指标配置
+func (m *prometheusMetrics) GetSLIMetrics() *SLIMetrics {
+	return m.sliMetrics
+}
+
+// GenerateAlertRules 生成告警规则
+func (m *prometheusMetrics) GenerateAlertRules() []AlertRule {
+	rules := []AlertRule{
+		{
+			Name:     "HighErrorRate",
+			Expr:     fmt.Sprintf("rate(%s_http_requests_total{status=~\"5..\"}[5m]) > %f", m.config.Namespace, m.sliMetrics.ErrorRateTarget),
+			For:      "2m",
+			Severity: "critical",
+			Labels: map[string]string{
+				"service": m.config.Namespace,
+			},
+			Annotations: map[string]string{
+				"summary":     "应用错误率过高",
+				"description": "错误率超过SLO目标",
+			},
+		},
+		{
+			Name:     "HighLatency",
+			Expr:     fmt.Sprintf("histogram_quantile(0.99, rate(%s_http_request_duration_seconds_bucket[5m])) > %f", m.config.Namespace, m.sliMetrics.LatencyTarget.Seconds()),
+			For:      "5m",
+			Severity: "warning",
+			Labels: map[string]string{
+				"service": m.config.Namespace,
+			},
+			Annotations: map[string]string{
+				"summary":     "应用延迟过高",
+				"description": "P99延迟超过SLO目标",
+			},
+		},
+		{
+			Name:     "LowAvailability",
+			Expr:     fmt.Sprintf("(1 - rate(%s_http_requests_total{status=~\"5..\"}[5m]) / rate(%s_http_requests_total[5m])) < %f", m.config.Namespace, m.config.Namespace, m.sliMetrics.AvailabilityTarget),
+			For:      "5m",
+			Severity: "critical",
+			Labels: map[string]string{
+				"service": m.config.Namespace,
+			},
+			Annotations: map[string]string{
+				"summary":     "应用可用性过低",
+				"description": "可用性低于SLO目标",
+			},
+		},
+	}
+	
+	return rules
+}
+
 // StartServer 启动指标服务器
 func (m *prometheusMetrics) StartServer(ctx context.Context) error {
 	mux := http.NewServeMux()
@@ -349,6 +517,10 @@ func (n *noopMetrics) DecGauge(name string, labels ...string)                   
 func (n *noopMetrics) RecordHTTPRequest(method, path, status string, duration time.Duration)          {}
 func (n *noopMetrics) RecordDatabaseOperation(operation, table string, duration time.Duration, success bool) {}
 func (n *noopMetrics) RecordCacheOperation(operation string, hit bool, duration time.Duration)       {}
+func (n *noopMetrics) RecordBusinessMetric(metric string, value float64, labels map[string]string)   {}
+func (n *noopMetrics) RecordSLI(sliType string, value float64, labels map[string]string)             {}
+func (n *noopMetrics) GetSLIMetrics() *SLIMetrics                                                     { return &SLIMetrics{} }
+func (n *noopMetrics) GenerateAlertRules() []AlertRule                                                { return []AlertRule{} }
 func (n *noopMetrics) StartServer(ctx context.Context) error                                          { return nil }
 func (n *noopMetrics) GetHandler() http.Handler                                                       { return http.NotFoundHandler() }
 func (n *noopMetrics) HealthCheck() error                                                             { return nil }

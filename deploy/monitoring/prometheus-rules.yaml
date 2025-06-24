@@ -1,0 +1,213 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: go-service-alerts
+  namespace: default
+  labels:
+    app: go-service
+    prometheus: kube-prometheus
+    role: alert-rules
+spec:
+  groups:
+  - name: go-service.rules
+    interval: 30s
+    rules:
+    # SLI/SLO 相关告警
+    - alert: HighErrorRate
+      expr: |
+        (
+          sum(rate(http_requests_total{job="go-service",status=~"5.."}[5m]))
+          /
+          sum(rate(http_requests_total{job="go-service"}[5m]))
+        ) > 0.05
+      for: 2m
+      labels:
+        severity: critical
+        service: go-service
+        sli: availability
+      annotations:
+        summary: "Go服务错误率过高"
+        description: "Go服务在过去5分钟内的错误率为 {{ $value | humanizePercentage }}，超过了5%的阈值"
+        runbook_url: "https://wiki.company.com/runbooks/go-service/high-error-rate"
+
+    - alert: HighLatency
+      expr: |
+        histogram_quantile(0.95,
+          sum(rate(http_request_duration_seconds_bucket{job="go-service"}[5m])) by (le)
+        ) > 0.5
+      for: 5m
+      labels:
+        severity: warning
+        service: go-service
+        sli: latency
+      annotations:
+        summary: "Go服务延迟过高"
+        description: "Go服务95%分位延迟为 {{ $value }}s，超过了500ms的阈值"
+        runbook_url: "https://wiki.company.com/runbooks/go-service/high-latency"
+
+    - alert: LowThroughput
+      expr: |
+        sum(rate(http_requests_total{job="go-service"}[5m])) < 10
+      for: 10m
+      labels:
+        severity: warning
+        service: go-service
+        sli: throughput
+      annotations:
+        summary: "Go服务吞吐量过低"
+        description: "Go服务在过去5分钟内的请求率为 {{ $value }} req/s，低于预期的10 req/s"
+
+    # 基础设施告警
+    - alert: ServiceDown
+      expr: up{job="go-service"} == 0
+      for: 1m
+      labels:
+        severity: critical
+        service: go-service
+      annotations:
+        summary: "Go服务实例下线"
+        description: "Go服务实例 {{ $labels.instance }} 已下线超过1分钟"
+        runbook_url: "https://wiki.company.com/runbooks/go-service/service-down"
+
+    - alert: HighMemoryUsage
+      expr: |
+        (
+          process_resident_memory_bytes{job="go-service"}
+          /
+          container_spec_memory_limit_bytes{pod=~"go-service-.*"}
+        ) > 0.8
+      for: 5m
+      labels:
+        severity: warning
+        service: go-service
+      annotations:
+        summary: "Go服务内存使用率过高"
+        description: "Go服务实例 {{ $labels.instance }} 内存使用率为 {{ $value | humanizePercentage }}，超过了80%的阈值"
+
+    - alert: HighCPUUsage
+      expr: |
+        rate(process_cpu_seconds_total{job="go-service"}[5m]) > 0.8
+      for: 5m
+      labels:
+        severity: warning
+        service: go-service
+      annotations:
+        summary: "Go服务CPU使用率过高"
+        description: "Go服务实例 {{ $labels.instance }} CPU使用率为 {{ $value | humanizePercentage }}，超过了80%的阈值"
+
+    # 数据库相关告警
+    - alert: DatabaseConnectionPoolExhausted
+      expr: |
+        database_connections_active{job="go-service"} / database_connections_max{job="go-service"} > 0.9
+      for: 2m
+      labels:
+        severity: critical
+        service: go-service
+        component: database
+      annotations:
+        summary: "数据库连接池即将耗尽"
+        description: "数据库连接池使用率为 {{ $value | humanizePercentage }}，超过了90%的阈值"
+
+    - alert: SlowDatabaseQueries
+      expr: |
+        histogram_quantile(0.95,
+          sum(rate(database_operation_duration_seconds_bucket{job="go-service"}[5m])) by (le)
+        ) > 1.0
+      for: 5m
+      labels:
+        severity: warning
+        service: go-service
+        component: database
+      annotations:
+        summary: "数据库查询延迟过高"
+        description: "数据库查询95%分位延迟为 {{ $value }}s，超过了1s的阈值"
+
+    # 缓存相关告警
+    - alert: LowCacheHitRate
+      expr: |
+        (
+          sum(rate(cache_operations_total{job="go-service",result="hit"}[5m]))
+          /
+          sum(rate(cache_operations_total{job="go-service"}[5m]))
+        ) < 0.8
+      for: 10m
+      labels:
+        severity: warning
+        service: go-service
+        component: cache
+      annotations:
+        summary: "缓存命中率过低"
+        description: "缓存命中率为 {{ $value | humanizePercentage }}，低于80%的预期值"
+
+    # Go运行时告警
+    - alert: HighGoroutineCount
+      expr: go_goroutines{job="go-service"} > 1000
+      for: 5m
+      labels:
+        severity: warning
+        service: go-service
+        component: runtime
+      annotations:
+        summary: "Goroutine数量过多"
+        description: "Go服务实例 {{ $labels.instance }} 的Goroutine数量为 {{ $value }}，超过了1000的阈值"
+
+    - alert: HighGCPause
+      expr: |
+        rate(go_gc_duration_seconds_sum{job="go-service"}[5m])
+        /
+        rate(go_gc_duration_seconds_count{job="go-service"}[5m])
+        > 0.01
+      for: 5m
+      labels:
+        severity: warning
+        service: go-service
+        component: runtime
+      annotations:
+        summary: "GC暂停时间过长"
+        description: "Go服务实例 {{ $labels.instance }} 的平均GC暂停时间为 {{ $value }}s，超过了10ms的阈值"
+
+    # 业务指标告警
+    - alert: BusinessMetricAnomaly
+      expr: |
+        abs(
+          business_metric_value{job="go-service"}
+          -
+          avg_over_time(business_metric_value{job="go-service"}[1h] offset 1d)
+        ) / avg_over_time(business_metric_value{job="go-service"}[1h] offset 1d) > 0.3
+      for: 10m
+      labels:
+        severity: warning
+        service: go-service
+        component: business
+      annotations:
+        summary: "业务指标异常"
+        description: "业务指标 {{ $labels.metric }} 当前值与昨日同期相比变化超过30%"
+
+  - name: go-service.slo
+    interval: 1m
+    rules:
+    # SLO记录规则
+    - record: slo:availability_1h
+      expr: |
+        (
+          sum(rate(http_requests_total{job="go-service",status!~"5.."}[1h]))
+          /
+          sum(rate(http_requests_total{job="go-service"}[1h]))
+        )
+
+    - record: slo:latency_p95_1h
+      expr: |
+        histogram_quantile(0.95,
+          sum(rate(http_request_duration_seconds_bucket{job="go-service"}[1h])) by (le)
+        )
+
+    - record: slo:throughput_1h
+      expr: |
+        sum(rate(http_requests_total{job="go-service"}[1h]))
+
+    # 错误预算计算
+    - record: slo:error_budget_remaining
+      expr: |
+        (
+          0.999 - (1 - slo:availability_1h)
+        ) / 0.001

@@ -5,6 +5,7 @@ package tracing
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"net/http"
 	"sync"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/baggage"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	"go.opentelemetry.io/otel/propagation"
@@ -61,12 +63,39 @@ type TracingStats struct {
 	ExportErrors   int64     `json:"export_errors"`
 }
 
+// AdaptiveSampler 自适应采样器
+type AdaptiveSampler struct {
+	ErrorSampleRate   float64 // 错误请求采样率
+	SlowSampleRate    float64 // 慢请求采样率
+	NormalSampleRate  float64 // 正常请求采样率
+	SlowThreshold     time.Duration // 慢请求阈值
+}
+
+// BaggageInfo 业务上下文信息
+type BaggageInfo struct {
+	UserID    string `json:"user_id,omitempty"`
+	RequestID string `json:"request_id,omitempty"`
+	TenantID  string `json:"tenant_id,omitempty"`
+	Version   string `json:"version,omitempty"`
+}
+
+// Manager 追踪管理器
+type Manager struct {
+	tracer   trace2.Tracer
+	provider *trace.TracerProvider
+	config   *config.TracingConfig
+	sampler  *AdaptiveSampler
+	mu       sync.RWMutex
+	stats    *TracingStats
+}
+
 // tracingManager 追踪管理器实现
 type tracingManager struct {
 	config   *config.TracingConfig
 	tracer   trace2.Tracer
 	provider *trace.TracerProvider
 	stats    *TracingStats
+	sampler  *AdaptiveSampler
 	mu       sync.RWMutex
 }
 
@@ -118,11 +147,20 @@ func New(cfg *config.TracingConfig) (Tracer, error) {
 	// 创建追踪器
 	tracer := provider.Tracer(cfg.ServiceName)
 
+	// 创建自适应采样器
+	adaptiveSampler := &AdaptiveSampler{
+		NormalSampleRate: 0.1,
+		ErrorSampleRate:  0.8,
+		SlowSampleRate:   0.5,
+		SlowThreshold:    time.Second,
+	}
+
 	m := &tracingManager{
 		config:   cfg,
 		tracer:   tracer,
 		provider: provider,
 		stats:    &TracingStats{},
+		sampler:  adaptiveSampler,
 	}
 
 	// 启动统计信息收集
@@ -204,6 +242,101 @@ func (t *tracingManager) HealthCheck() error {
 		return fmt.Errorf("tracer provider is nil")
 	}
 	return nil
+}
+
+// StartSpanWithSampling 使用智能采样策略开始span
+func (t *tracingManager) StartSpanWithSampling(ctx context.Context, name string, duration time.Duration, hasError bool, opts ...trace2.SpanStartOption) (context.Context, trace2.Span) {
+	// 根据请求特征决定采样
+	shouldSample := t.shouldSample(duration, hasError)
+	if !shouldSample {
+		return ctx, trace2.SpanFromContext(ctx)
+	}
+	
+	return t.StartSpan(ctx, name, opts...)
+}
+
+// shouldSample 智能采样决策
+func (t *tracingManager) shouldSample(duration time.Duration, hasError bool) bool {
+	if t.sampler == nil {
+		return true
+	}
+	
+	// 错误请求优先采样
+	if hasError {
+		return rand.Float64() < t.sampler.ErrorSampleRate
+	}
+	
+	// 慢请求采样
+	if duration > t.sampler.SlowThreshold {
+		return rand.Float64() < t.sampler.SlowSampleRate
+	}
+	
+	// 正常请求采样
+	return rand.Float64() < t.sampler.NormalSampleRate
+}
+
+// InjectBaggage 注入业务上下文信息
+func (t *tracingManager) InjectBaggage(ctx context.Context, info BaggageInfo) context.Context {
+	bag := baggage.FromContext(ctx)
+	
+	if info.UserID != "" {
+		member, _ := baggage.NewMember("user_id", info.UserID)
+		bag, _ = bag.SetMember(member)
+	}
+	if info.RequestID != "" {
+		member, _ := baggage.NewMember("request_id", info.RequestID)
+		bag, _ = bag.SetMember(member)
+	}
+	if info.TenantID != "" {
+		member, _ := baggage.NewMember("tenant_id", info.TenantID)
+		bag, _ = bag.SetMember(member)
+	}
+	if info.Version != "" {
+		member, _ := baggage.NewMember("version", info.Version)
+		bag, _ = bag.SetMember(member)
+	}
+	
+	return baggage.ContextWithBaggage(ctx, bag)
+}
+
+// ExtractBaggage 提取业务上下文信息
+func (t *tracingManager) ExtractBaggage(ctx context.Context) BaggageInfo {
+	bag := baggage.FromContext(ctx)
+	
+	return BaggageInfo{
+		UserID:    bag.Member("user_id").Value(),
+		RequestID: bag.Member("request_id").Value(),
+		TenantID:  bag.Member("tenant_id").Value(),
+		Version:   bag.Member("version").Value(),
+	}
+}
+
+// AddSpanEvent 添加span事件
+func (t *tracingManager) AddSpanEvent(ctx context.Context, name string, attrs map[string]interface{}) {
+	span := trace2.SpanFromContext(ctx)
+	if span == nil {
+		return
+	}
+	
+	otelAttrs := make([]attribute.KeyValue, 0, len(attrs))
+	for k, v := range attrs {
+		switch val := v.(type) {
+		case string:
+			otelAttrs = append(otelAttrs, attribute.String(k, val))
+		case int:
+			otelAttrs = append(otelAttrs, attribute.Int(k, val))
+		case int64:
+			otelAttrs = append(otelAttrs, attribute.Int64(k, val))
+		case float64:
+			otelAttrs = append(otelAttrs, attribute.Float64(k, val))
+		case bool:
+			otelAttrs = append(otelAttrs, attribute.Bool(k, val))
+		default:
+			otelAttrs = append(otelAttrs, attribute.String(k, fmt.Sprintf("%v", val)))
+		}
+	}
+	
+	span.AddEvent(name, trace2.WithAttributes(otelAttrs...))
 }
 
 // noopTracer 空操作追踪器实现（当追踪被禁用时使用）

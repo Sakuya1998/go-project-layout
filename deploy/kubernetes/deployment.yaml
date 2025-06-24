@@ -1,0 +1,194 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: go-service
+  namespace: default
+  labels:
+    app: go-service
+    version: v1
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: go-service
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  minReadySeconds: 10
+  revisionHistoryLimit: 5
+  template:
+    metadata:
+      labels:
+        app: go-service
+        version: v1
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534
+      containers:
+      - name: go-service
+        image: go-service:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: http
+          containerPort: 8080
+          protocol: TCP
+        - name: metrics
+          containerPort: 9090
+          protocol: TCP
+        env:
+        - name: APP_ENV
+          valueFrom:
+            configMapKeyRef:
+              name: go-service-config
+              key: APP_ENV
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: go-service-config
+              key: LOG_LEVEL
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: go-service-secrets
+              key: DB_PASSWORD
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 15
+          periodSeconds: 20
+          timeoutSeconds: 3
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: http
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 2
+          successThreshold: 1
+          failureThreshold: 3
+        startupProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 2
+          failureThreshold: 12
+        volumeMounts:
+        - name: config-volume
+          mountPath: /app/configs
+          readOnly: true
+        - name: tmp-volume
+          mountPath: /tmp
+      volumes:
+      - name: config-volume
+        configMap:
+          name: go-service-config
+          items:
+          - key: config.yaml
+            path: config.yaml
+      - name: tmp-volume
+        emptyDir: {}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - go-service
+              topologyKey: kubernetes.io/hostname
+      terminationGracePeriodSeconds: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: go-service
+  namespace: default
+  labels:
+    app: go-service
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9090"
+    prometheus.io/path: "/metrics"
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 80
+    targetPort: http
+    protocol: TCP
+  - name: metrics
+    port: 9090
+    targetPort: metrics
+    protocol: TCP
+  selector:
+    app: go-service
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: go-service-config
+  namespace: default
+data:
+  APP_ENV: "production"
+  LOG_LEVEL: "info"
+  config.yaml: |
+    app:
+      name: go-service
+      version: 1.0.0
+      environment: production
+    server:
+      port: 8080
+      timeout: 30s
+      metrics_port: 9090
+    database:
+      host: postgres
+      port: 5432
+      name: app_db
+      user: app_user
+      max_open_conns: 20
+      max_idle_conns: 5
+      conn_max_lifetime: 1h
+    redis:
+      host: redis
+      port: 6379
+      db: 0
+      pool_size: 10
+    logging:
+      level: info
+      format: json
+      output: stdout
+    tracing:
+      enabled: true
+      exporter_type: otlp
+      endpoint: jaeger-collector:4317
+      service_name: go-service
+      service_version: 1.0.0
+      environment: production
+      sample_ratio: 0.1
+    metrics:
+      enabled: true
+      go_metrics_enabled: true
+      process_metrics_enabled: true

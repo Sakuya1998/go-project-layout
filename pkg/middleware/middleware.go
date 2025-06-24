@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"go.uber.org/zap"
 
 	"github.com/Sakuya1998/go-project-layout/pkg/config"
 	"github.com/Sakuya1998/go-project-layout/pkg/logger"
@@ -41,17 +40,17 @@ func (m *MiddlewareManager) Logger() gin.HandlerFunc {
 		requestID := c.GetString("request_id")
 		
 		// 记录请求开始日志
-		logger.InfoContext(c.Request.Context(), "HTTP请求开始",
-			zap.String("request_id", requestID),
-			zap.String("method", c.Request.Method),
-			zap.String("path", path),
-			zap.String("query", raw),
-			zap.String("client_ip", c.ClientIP()),
-			zap.String("user_agent", c.Request.UserAgent()),
-			zap.String("referer", c.Request.Referer()),
-			zap.Int64("content_length", c.Request.ContentLength),
-			zap.String("proto", c.Request.Proto),
-			zap.Time("timestamp", start),
+		logger.InfoContextKV(c.Request.Context(), "HTTP请求开始",
+			"request_id", requestID,
+			"method", c.Request.Method,
+			"path", path,
+			"query", raw,
+			"client_ip", c.ClientIP(),
+			"user_agent", c.Request.UserAgent(),
+			"referer", c.Request.Referer(),
+			"content_length", c.Request.ContentLength,
+			"proto", c.Request.Proto,
+			"timestamp", start,
 		)
 
 		c.Next()
@@ -61,18 +60,18 @@ func (m *MiddlewareManager) Logger() gin.HandlerFunc {
 		status := c.Writer.Status()
 		responseSize := c.Writer.Size()
 		
-		// 构建日志字段
-		logFields := []zap.Field{
-			zap.String("request_id", requestID),
-			zap.String("method", c.Request.Method),
-			zap.String("path", path),
-			zap.String("query", raw),
-			zap.Int("status", status),
-			zap.Duration("latency", latency),
-			zap.String("client_ip", c.ClientIP()),
-			zap.String("user_agent", c.Request.UserAgent()),
-			zap.Int("response_size", responseSize),
-			zap.String("proto", c.Request.Proto),
+		// 构建基础日志参数
+		baseLogArgs := []interface{}{
+			"request_id", requestID,
+			"method", c.Request.Method,
+			"path", path,
+			"query", raw,
+			"status", status,
+			"latency", latency,
+			"client_ip", c.ClientIP(),
+			"user_agent", c.Request.UserAgent(),
+			"response_size", responseSize,
+			"proto", c.Request.Proto,
 		}
 
 		// 添加错误信息（如果有）
@@ -81,29 +80,29 @@ func (m *MiddlewareManager) Logger() gin.HandlerFunc {
 			for i, err := range c.Errors {
 				errorMsgs[i] = err.Error()
 			}
-			logFields = append(logFields, zap.Strings("errors", errorMsgs))
+			baseLogArgs = append(baseLogArgs, "errors", errorMsgs)
 		}
 
 		// 根据状态码选择日志级别和消息
 		ctx := c.Request.Context()
 		switch {
 		case status >= 500:
-			logger.ErrorContext(ctx, "HTTP请求完成 - 服务器错误", logFields...)
+			logger.ErrorContextKV(ctx, "HTTP请求完成 - 服务器错误", baseLogArgs...)
 		case status >= 400:
-			logger.WarnContext(ctx, "HTTP请求完成 - 客户端错误", logFields...)
+			logger.WarnContextKV(ctx, "HTTP请求完成 - 客户端错误", baseLogArgs...)
 		case status >= 300:
-			logger.InfoContext(ctx, "HTTP请求完成 - 重定向", logFields...)
+			logger.InfoContextKV(ctx, "HTTP请求完成 - 重定向", baseLogArgs...)
 		default:
-			logger.InfoContext(ctx, "HTTP请求完成 - 成功", logFields...)
+			logger.InfoContextKV(ctx, "HTTP请求完成 - 成功", baseLogArgs...)
 		}
 
 		// 性能警告
 		if latency > 5*time.Second {
-			logger.WarnContext(ctx, "慢请求检测",
-				zap.String("request_id", requestID),
-				zap.Duration("latency", latency),
-				zap.String("path", path),
-				zap.String("method", c.Request.Method),
+			logger.WarnContextKV(ctx, "慢请求检测",
+				"request_id", requestID,
+				"latency", latency,
+				"path", path,
+				"method", c.Request.Method,
 			)
 		}
 	}
@@ -116,28 +115,26 @@ func (m *MiddlewareManager) Recovery() gin.HandlerFunc {
 		ctx := c.Request.Context()
 		
 		// 记录panic详细信息
-		logFields := []zap.Field{
-			zap.String("request_id", requestID),
-			zap.String("method", c.Request.Method),
-			zap.String("path", c.Request.URL.Path),
-			zap.String("client_ip", c.ClientIP()),
-			zap.Any("panic_value", recovered),
-		}
-		
-		logger.ErrorContext(ctx, "系统发生Panic异常", logFields...)
+		logger.ErrorContextKV(ctx, "系统发生Panic异常",
+			"request_id", requestID,
+			"method", c.Request.Method,
+			"path", c.Request.URL.Path,
+			"client_ip", c.ClientIP(),
+			"panic_value", recovered,
+		)
 		
 		// 记录堆栈信息
 		if err, ok := recovered.(error); ok {
-			logger.ErrorContext(ctx, "Panic堆栈信息",
-				zap.String("request_id", requestID),
-				zap.Error(err),
-				zap.Stack("stack"),
+			logger.ErrorContextKV(ctx, "Panic堆栈信息",
+				"request_id", requestID,
+				"error", err.Error(),
+				"stack", "panic_stack",
 			)
 		} else if errStr, ok := recovered.(string); ok {
-			logger.ErrorContext(ctx, "Panic堆栈信息",
-				zap.String("request_id", requestID),
-				zap.String("error", errStr),
-				zap.Stack("stack"),
+			logger.ErrorContextKV(ctx, "Panic堆栈信息",
+				"request_id", requestID,
+				"error", errStr,
+				"stack", "panic_stack",
 			)
 		}
 		
@@ -180,6 +177,67 @@ func (m *MiddlewareManager) Metrics() gin.HandlerFunc {
 	}
 }
 
+// SecurityHeaders 安全头中间件
+func (m *MiddlewareManager) SecurityHeaders() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Content Security Policy
+		c.Header("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' https:; connect-src 'self'; frame-ancestors 'none';")
+		
+		// HTTP Strict Transport Security
+		c.Header("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload")
+		
+		// X-Frame-Options
+		c.Header("X-Frame-Options", "DENY")
+		
+		// X-Content-Type-Options
+		c.Header("X-Content-Type-Options", "nosniff")
+		
+		// X-XSS-Protection
+		c.Header("X-XSS-Protection", "1; mode=block")
+		
+		// Referrer Policy
+		c.Header("Referrer-Policy", "strict-origin-when-cross-origin")
+		
+		// Permissions Policy
+		c.Header("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+		
+		c.Next()
+	}
+}
+
+// APIRateLimit 高级API限流中间件
+func (m *MiddlewareManager) APIRateLimit(config RateLimitConfig) gin.HandlerFunc {
+	limiter := NewTokenBucketLimiter(config)
+	
+	return func(c *gin.Context) {
+		clientIP := c.ClientIP()
+		userID := c.GetString("user_id")
+		apiKey := c.GetHeader("X-API-Key")
+		
+		// 构建限流键
+		limitKey := buildLimitKey(clientIP, userID, apiKey, c.FullPath())
+		
+		// 检查限流
+		allowed, remaining, resetTime := limiter.Allow(limitKey)
+		if !allowed {
+			c.Header("X-RateLimit-Remaining", "0")
+			c.Header("X-RateLimit-Reset", fmt.Sprintf("%d", resetTime.Unix()))
+			c.JSON(http.StatusTooManyRequests, gin.H{
+				"error": "Rate limit exceeded",
+				"retry_after": resetTime.Sub(time.Now()).Seconds(),
+			})
+			c.Abort()
+			return
+		}
+		
+		// 设置限流响应头
+		c.Header("X-RateLimit-Remaining", fmt.Sprintf("%d", remaining))
+		c.Header("X-RateLimit-Reset", fmt.Sprintf("%d", resetTime.Unix()))
+		
+		c.Next()
+	}
+}
+
 // RateLimit 限流中间件（简单实现）
 func (m *MiddlewareManager) RateLimit(maxRequests int, window time.Duration) gin.HandlerFunc {
 	type client struct {
@@ -198,11 +256,11 @@ func (m *MiddlewareManager) RateLimit(maxRequests int, window time.Duration) gin
 		if cl, exists := clients[clientIP]; exists {
 			if now.Sub(cl.lastReset) > window {
 				// 记录窗口重置
-				logger.DebugContext(ctx, "限流窗口重置",
-					zap.String("request_id", requestID),
-					zap.String("client_ip", clientIP),
-					zap.Int("previous_requests", cl.requests),
-					zap.Duration("window_duration", window),
+				logger.DebugContextKV(ctx, "限流窗口重置",
+					"request_id", requestID,
+					"client_ip", clientIP,
+					"previous_requests", cl.requests,
+					"window_duration", window,
 				)
 				cl.requests = 0
 				cl.lastReset = now
@@ -210,25 +268,25 @@ func (m *MiddlewareManager) RateLimit(maxRequests int, window time.Duration) gin
 			cl.requests++
 			
 			// 记录当前请求计数
-			logger.DebugContext(ctx, "限流检查",
-				zap.String("request_id", requestID),
-				zap.String("client_ip", clientIP),
-				zap.Int("current_requests", cl.requests),
-				zap.Int("max_requests", maxRequests),
-				zap.String("path", c.Request.URL.Path),
+			logger.DebugContextKV(ctx, "限流检查",
+				"request_id", requestID,
+				"client_ip", clientIP,
+				"current_requests", cl.requests,
+				"max_requests", maxRequests,
+				"path", c.Request.URL.Path,
 			)
 			
 			if cl.requests > maxRequests {
 				// 记录限流触发
-				logger.WarnContext(ctx, "触发限流保护",
-					zap.String("request_id", requestID),
-					zap.String("client_ip", clientIP),
-					zap.Int("requests_count", cl.requests),
-					zap.Int("max_requests", maxRequests),
-					zap.Duration("window_duration", window),
-					zap.String("path", c.Request.URL.Path),
-					zap.String("method", c.Request.Method),
-					zap.String("user_agent", c.Request.UserAgent()),
+				logger.WarnContextKV(ctx, "触发限流保护",
+					"request_id", requestID,
+					"client_ip", clientIP,
+					"requests_count", cl.requests,
+					"max_requests", maxRequests,
+					"window_duration", window,
+					"path", c.Request.URL.Path,
+					"method", c.Request.Method,
+					"user_agent", c.Request.UserAgent(),
 				)
 				c.JSON(http.StatusTooManyRequests, gin.H{"error": "Rate limit exceeded"})
 				c.Abort()
@@ -236,11 +294,11 @@ func (m *MiddlewareManager) RateLimit(maxRequests int, window time.Duration) gin
 			}
 		} else {
 			// 记录新客户端
-			logger.DebugContext(ctx, "新客户端限流初始化",
-				zap.String("request_id", requestID),
-				zap.String("client_ip", clientIP),
-				zap.Int("max_requests", maxRequests),
-				zap.Duration("window_duration", window),
+			logger.DebugContextKV(ctx, "新客户端限流初始化",
+				"request_id", requestID,
+				"client_ip", clientIP,
+				"max_requests", maxRequests,
+				"window_duration", window,
 			)
 			clients[clientIP] = &client{
 				requests: 1,
@@ -259,11 +317,11 @@ func (m *MiddlewareManager) Timeout(timeout time.Duration) gin.HandlerFunc {
 		start := time.Now()
 		
 		// 记录超时设置
-		logger.DebugContext(c.Request.Context(), "设置请求超时",
-			zap.String("request_id", requestID),
-			zap.Duration("timeout", timeout),
-			zap.String("path", c.Request.URL.Path),
-			zap.String("method", c.Request.Method),
+		logger.DebugContextKV(c.Request.Context(), "设置请求超时",
+			"request_id", requestID,
+			"timeout", timeout,
+			"path", c.Request.URL.Path,
+			"method", c.Request.Method,
 		)
 		
 		ctx, cancel := context.WithTimeout(c.Request.Context(), timeout)
@@ -284,21 +342,21 @@ func (m *MiddlewareManager) Timeout(timeout time.Duration) gin.HandlerFunc {
 			duration := time.Since(start)
 			if duration > timeout/2 {
 				// 请求时间超过超时时间的一半，记录警告
-				logger.WarnContext(ctx, "请求接近超时阈值",
-					zap.String("request_id", requestID),
-					zap.Duration("duration", duration),
-					zap.Duration("timeout", timeout),
-					zap.String("path", c.Request.URL.Path),
+				logger.WarnContextKV(ctx, "请求接近超时阈值",
+					"request_id", requestID,
+					"duration", duration,
+					"timeout", timeout,
+					"path", c.Request.URL.Path,
 				)
 			}
 		case <-ctx.Done():
 			// 请求超时
-			logger.ErrorContext(ctx, "请求处理超时",
-				zap.String("request_id", requestID),
-				zap.Duration("timeout", timeout),
-				zap.String("path", c.Request.URL.Path),
-				zap.String("method", c.Request.Method),
-				zap.String("client_ip", c.ClientIP()),
+			logger.ErrorContextKV(ctx, "请求处理超时",
+				"request_id", requestID,
+				"timeout", timeout,
+				"path", c.Request.URL.Path,
+				"method", c.Request.Method,
+				"client_ip", c.ClientIP(),
 			)
 			c.JSON(http.StatusRequestTimeout, gin.H{"error": "Request timeout"})
 			c.Abort()
@@ -314,19 +372,19 @@ func (m *MiddlewareManager) Auth() gin.HandlerFunc {
 		token := c.GetHeader("Authorization")
 		
 		// 记录认证开始
-		logger.DebugContext(ctx, "开始JWT认证",
-			zap.String("request_id", requestID),
-			zap.String("path", c.Request.URL.Path),
-			zap.String("method", c.Request.Method),
-			zap.String("client_ip", c.ClientIP()),
-			zap.Bool("has_auth_header", token != ""),
+		logger.DebugContextKV(ctx, "开始JWT认证",
+			"request_id", requestID,
+			"path", c.Request.URL.Path,
+			"method", c.Request.Method,
+			"client_ip", c.ClientIP(),
+			"has_auth_header", token != "",
 		)
 		
 		if token == "" {
-			logger.WarnContext(ctx, "认证失败 - 缺少Authorization头",
-				zap.String("request_id", requestID),
-				zap.String("path", c.Request.URL.Path),
-				zap.String("client_ip", c.ClientIP()),
+			logger.WarnContextKV(ctx, "认证失败 - 缺少Authorization头",
+				"request_id", requestID,
+				"path", c.Request.URL.Path,
+				"client_ip", c.ClientIP(),
 			)
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Missing authorization header"})
 			c.Abort()
@@ -341,11 +399,11 @@ func (m *MiddlewareManager) Auth() gin.HandlerFunc {
 
 		// 这里应该验证JWT token，简化实现
 		if token == "" {
-			logger.WarnContext(ctx, "认证失败 - Token为空",
-				zap.String("request_id", requestID),
-				zap.String("path", c.Request.URL.Path),
-				zap.String("client_ip", c.ClientIP()),
-				zap.String("auth_header", originalToken),
+			logger.WarnContextKV(ctx, "认证失败 - Token为空",
+				"request_id", requestID,
+				"path", c.Request.URL.Path,
+				"client_ip", c.ClientIP(),
+				"auth_header", originalToken,
 			)
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
 			c.Abort()
@@ -353,11 +411,11 @@ func (m *MiddlewareManager) Auth() gin.HandlerFunc {
 		}
 
 		// 记录认证成功
-		logger.InfoContext(ctx, "JWT认证成功",
-			zap.String("request_id", requestID),
-			zap.String("path", c.Request.URL.Path),
-			zap.String("client_ip", c.ClientIP()),
-			zap.Int("token_length", len(token)),
+		logger.InfoContextKV(ctx, "JWT认证成功",
+			"request_id", requestID,
+			"path", c.Request.URL.Path,
+			"client_ip", c.ClientIP(),
+			"token_length", len(token),
 		)
 
 		c.Next()
@@ -380,12 +438,12 @@ func (m *MiddlewareManager) RequestID() gin.HandlerFunc {
 		c.Set("request_id", requestID)
 		
 		// 记录请求ID信息
-		logger.DebugContext(c.Request.Context(), "请求ID处理",
-			zap.String("request_id", requestID),
-			zap.Bool("generated", generated),
-			zap.String("path", c.Request.URL.Path),
-			zap.String("method", c.Request.Method),
-			zap.String("client_ip", c.ClientIP()),
+		logger.DebugContextKV(c.Request.Context(), "请求ID处理",
+			"request_id", requestID,
+			"generated", generated,
+			"path", c.Request.URL.Path,
+			"method", c.Request.Method,
+			"client_ip", c.ClientIP(),
 		)
 		
 		c.Next()
